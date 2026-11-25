@@ -67,7 +67,7 @@ async def resolve_model(name):
         return choices.pop()
     if choices:
         raise ValueError(f"{name} 匹配多个模型，请使用完整 ID：" + "、".join(sorted(model_id for model_id, _ in choices)))
-    raise ValueError(f"无法选择 {name}。请用 /agy-cli models 查看完整模型 ID。")
+    raise ValueError(f"无法选择 {name}。请用 /agy-cli list-models 查看完整模型 ID。")
 
 
 async def combine(previous, model, effort, permission):

@@ -9,8 +9,8 @@ description: 通过 agy MCP 提问并在聊天中展示模型原文，查看可�
 
 | 输入 | 操作 |
 | --- | --- |
-| 空输入或 `help` | 在聊天中给出直接提问、`models`、`status`、`neon`、`neon high`、`effort 档位`、`permission 策略`、`reset` 的简短用法。 |
-| `models` | 调用 `list_models()`，以可复制的模型 ID 为主。Claude 的版本可写作点号，例如 `claude-opus-5.5`，将 effort 单列。 |
+| 空输入或 `help` | 在聊天中给出直接提问、`list-models`、`status`、`neon`、`neon high`、`effort 档位`、`permission 策略`、`reset` 的简短用法。 |
+| `list-models` | 调用 `list_models()`，以可复制的模型 ID 为主。Claude 的版本可写作点号，例如 `claude-opus-5.5`，将 effort 单列。 |
 | `status` | 调用 `get_settings()`，显示实际模型、当前和可选 effort，以及 MCP 保存的权限策略。将 `inherit` 显示为“跟随 agy CLI”。 |
 | 单独的 `model`、`effort` 或 `permission` | 用 `get_settings()` 查看对应字段。effort 和 permission 一并列出可选值。 |
 | `简称 [档位]` 或 `model 简称 [档位]` | 输入仅含模型简称和可选档位时切换默认模型。例：`neon high` 调用 `set_defaults(model="neon", effort="high")`；`neon` 仅调用 `set_defaults(model="neon")`，保留已有 effort。直接传简称，让 MCP 解析。 |
