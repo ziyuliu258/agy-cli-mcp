@@ -10,7 +10,7 @@ description: 通过 agy MCP 提问并在聊天中展示模型原文，查看可�
 | 输入 | 操作 |
 | --- | --- |
 | 空输入或 `help` | 在聊天中给出直接提问、`list-models`、`status`、`neon`、`neon high`、`effort 档位`、`permission 策略`、`reset` 的简短用法。 |
-| `list-models` | 调用 `select_model()`，让用户从当前账号的模型和档位中选一个，设为以后的 agy 默认模型。 |
+| `list-models` | Claude Code 先调用只读的 `list_models()`，走下方聊天选模流程。其他客户端调用 `select_model()`。 |
 | `status` | 调用 `get_settings()`，显示实际模型、当前和可选 effort，以及 MCP 保存的权限策略。将 `inherit` 显示为“跟随 agy CLI”。 |
 | 单独的 `model`、`effort` 或 `permission` | 用 `get_settings()` 查看对应字段。effort 和 permission 一并列出可选值。 |
 | `简称 [档位]` 或 `model 简称 [档位]` | 输入仅含模型简称和可选档位时切换默认模型。例：`neon high` 调用 `set_defaults(model="neon", effort="high")`；`neon` 仅调用 `set_defaults(model="neon")`，保留已有 effort。直接传简称，让 MCP 解析。 |
@@ -19,10 +19,12 @@ description: 通过 agy MCP 提问并在聊天中展示模型原文，查看可�
 | `reset` | 调用 `set_defaults(model="inherit", effort="inherit", permission="inherit")`。单项恢复使用 `effort inherit` 等。 |
 | `ask [选项] 问题` 或直接输入问题 | 调用 `ask(prompt=问题)`。保留问题原文、换行和代码，按原样返回 agy 的回复，除非用户要求加工。 |
 
-选模时按 `select_model` 返回的状态处理：
+**Claude Code 聊天选模。** 读取 `list_models()` 返回的模型后，先在面向用户的聊天消息里展示带编号的选项（带准确 ID 和档位，可按系列分组）。工具调用的折叠输出不算已展示。再用 Claude 自带的 `AskUserQuestion` 单选；超出按钮上限时先选系列再选具体型号和档位，或提供分页。使用此路径时跳过 MCP 的 `select_model` 弹窗。若当前界面没有提问控件、控件未展示、返回空答案或被宿主拒绝，在普通聊天回复中保留编号选项并问“选哪个？回复编号或模型 ID 即可。”等下一条用户消息。只有用户明确取消才报告已取消。拿到具体选择后，用这次菜单对应的原始 ID 调用一次 `set_defaults(model=ID, effort="inherit")`。
+
+其他客户端按 `select_model` 返回的状态处理：
 
 - `selected`：服务已保存，直接显示所选 ID。
-- `cancelled`：结束选择。
+- `cancelled`：表示表单关闭。用户已明确取消时结束；如果只收到宿主返回的关闭状态，在聊天正文给出 `models` 中的编号选项，允许用户直接回复。旧版服务缺少 `models` 时调用 `list_models()` 补齐。不要重开弹窗。
 - `needs_selection`：以 `models` 中的精确 ID 为选项，用宿主实际提供的单选提问工具询问（如 AskUserQuestion、request_user_input_async 或 question）。超出选项数量上限时按系列分层或分页，涵盖全部档位。没有提问控件时，在聊天中给出编号清单，请用户回复编号或 ID。等待实际选择；编号对应本次展示的顺序。收到明确选择后调用 `set_defaults(model=所选原始ID, effort="inherit")` 一次，成功后确认。取消或没有回复时结束或继续等待。
 
 如果用户明确要求“只列出”，调用只读的 `list_models()`。如果服务版本较旧或宿主明确报告不支持 MCP 表单，调用 `list_models()` 后走聊天单选流程。

@@ -18,8 +18,11 @@ mcp = FastMCP("agy", instructions=(
     "When the user asks to consult an agy model, use ask. "
     "Show its reply directly in the chat, preserving its language and Markdown, "
     "unless the user requests a summary or further processing. Use ask parameters for one turn. "
-    "For list-models or interactive selection, call select_model. On needs_selection, "
-    "ask using the returned IDs and wait. Apply the selected ID via set_defaults with "
+    "In Claude Code, list_models then show numbered choices in chat and use AskUserQuestion if available. "
+    "In other hosts, use select_model for interactive selection. On needs_selection, "
+    "ask using the returned IDs and wait. A closed form alone does not establish user intent; "
+    "if the user did not explicitly cancel, show the returned choices in chat for a numbered reply. "
+    "Apply the selected ID via set_defaults with "
     "effort='inherit'. For a read-only catalog use list_models. "
     "Use set_defaults only when the user requests a lasting change. Choose permissions only "
     "as requested by the user."
@@ -197,6 +200,9 @@ async def select_model(ctx: Context) -> dict:
         raise RuntimeError("agy 没有提供可选择的模型。")
     fallback = {"status": "needs_selection", "models": choices}
     client = ctx.session.client_params
+    # Claude surfaces can advertise forms but return cancel without showing them.
+    if client and "claude" in client.clientInfo.name.casefold():
+        return fallback
     support = client.capabilities.elicitation if client else None
     # An empty elicitation capability advertises legacy form support.
     if support is None or (support.form is None and support.url is not None):
@@ -215,7 +221,7 @@ async def select_model(ctx: Context) -> dict:
             return fallback
         raise
     if answer.action != "accept":
-        return {"status": "cancelled"}
+        return {"status": "cancelled", "models": choices}
     selected = (answer.content or {}).get("model")
     if not isinstance(selected, str) or selected not in choices:
         raise ValueError("请选择本次列表中的一个模型。")
