@@ -49,6 +49,28 @@ Claude、GPT 等外接模型在切换和单次提问时均使用模型 ID。例�
 
 模型、effort 和权限子命令带值时会保存默认值，省略值时查询当前设置。`ask` 的选项仅用于当前问题。其他兼容 Agent Skills 的客户端也可以把包内的 `skills/agy-cli` 目录复制到自己的技能目录，再连接 `agy` MCP。
 
+## 交互选模及其他 harness
+
+`/agy-cli list-models` 会从当前账号读取模型，显示“为后续 agy 请求选择默认模型”的单选问题。每个选项对应一个精确 ID，包含该模型提供的档位。提交后自动保存，取消会保留之前的配置。仅想查看清单时可说“只列出 agy 模型”。
+
+服务通过标准 MCP 表单请求选择。客户端未声明表单能力时，由 skill 使用该客户端的提问控件；只有文本聊天时，会给出编号列表，回复编号或完整 ID 即可。多个客户端共用同一安装时，保存的默认值也共享。
+
+在解压目录中执行以下命令可安装另外四个客户端的入口，`--skill` 可按需选用。Windows 将 `python3` 换成 `py -3`。
+
+```sh
+python3 install.py --skill pi --skill dsh --skill opencode --skill openchamber
+```
+
+| 客户端 | 入口与首次注册 |
+| --- | --- |
+| Pi | 安装器写入个人 skill 和 `prompts/agy-cli.md`，使用 `/agy-cli list-models`。执行安装器打印的 `pi mcp add` 命令。只有桌面版时，可把生成的 `mcp-config.json` 中的 agy 条目合并到 Pi 用户目录的 `mcp.json`。 |
+| DeepSeek Harness（DSH） | skill 位于 `$DSH_HOME/skills`，默认 `~/.dsh/skills`。将安装目录中生成的 `dsh-agy.patch.yml` 列表项合并到目标 profile 的 `cordis.patch.yml`，加载该 profile。带技能入口的界面可用 `/agy-cli list-models`。 |
+| OpenCode | 安装器写入用户目录的 `skills/agy-cli` 和 `commands/agy-cli.md`。执行打印的 `opencode mcp add --global` 命令，再输入 `/agy-cli list-models`。 |
+| OpenChamber | 使用其连接的 OpenCode 后端上的同一份 MCP 配置和命令。如果后端在容器或远程机器，在该后端安装并注册。 |
+| 其他 harness | 支持 stdio MCP 的客户端可导入生成的 command 和 args；支持 Agent Skills 的客户端可复制包内的 `skills/agy-cli`。仅支持 MCP 工具时直接调用 `select_model`；若返回 `needs_selection`，展示 models 并在用户选定后用精确 ID 调用 `set_defaults(model=ID, effort="inherit")`。 |
+
+[Pi MCP 配置](https://docs.pi.dev/latest/mcp) · [DSH MCP 客户端](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/mcp/mcp-client) · [OpenCode 命令](https://opencode.ai/docs/commands) · [OpenChamber 后端](https://github.com/openchamber/openchamber)
+
 ## 在聊天里切换模型、effort 和权限
 
 | 想做的事 | 可以直接对 agent 说 |

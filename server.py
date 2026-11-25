@@ -11,12 +11,16 @@ from tempfile import TemporaryDirectory
 from typing import Literal, get_args
 
 import anyio
-from mcp.server.fastmcp import FastMCP
+from mcp import McpError, types
+from mcp.server.fastmcp import Context, FastMCP
 
 mcp = FastMCP("agy", instructions=(
     "When the user asks to consult an agy model, use ask. "
     "Show its reply directly in the chat, preserving its language and Markdown, "
     "unless the user requests a summary or further processing. Use ask parameters for one turn. "
+    "For list-models or interactive selection, call select_model. On needs_selection, "
+    "ask using the returned IDs and wait. Apply the selected ID via set_defaults with "
+    "effort='inherit'. For a read-only catalog use list_models. "
     "Use set_defaults only when the user requests a lasting change. Choose permissions only "
     "as requested by the user."
 ))
@@ -177,6 +181,46 @@ async def list_models() -> str:
     if code or not stdout.strip():
         raise RuntimeError(stderr or f"agy models 未返回模型列表（退出码 {code}）。")
     return stdout.strip()
+
+
+@mcp.tool()
+async def select_model(ctx: Context) -> dict:
+    """Ask the user to pick an agy default from the live catalog. If the host
+    needs to ask in chat, return the choices and wait for an explicit selection.
+    """
+    choices = {}
+    for line in (await list_models()).splitlines():
+        model_id, tab, label = line.partition("\t")
+        if tab and model_id:
+            choices[model_id] = label.strip()
+    if not choices:
+        raise RuntimeError("agy 没有提供可选择的模型。")
+    fallback = {"status": "needs_selection", "models": choices}
+    client = ctx.session.client_params
+    support = client.capabilities.elicitation if client else None
+    # An empty elicitation capability advertises legacy form support.
+    if support is None or (support.form is None and support.url is not None):
+        return fallback
+    schema = {
+        "type": "object",
+        "properties": {"model": {"title": "模型 ID（含档位）", "type": "string", "enum": list(choices)}},
+        "required": ["model"],
+    }
+    try:
+        answer = await ctx.session.elicit_form(
+            "为后续 agy 请求选择默认模型", schema, related_request_id=ctx.request_context.request_id
+        )
+    except McpError as exc:
+        if exc.error.code in (types.METHOD_NOT_FOUND, types.INVALID_PARAMS):
+            return fallback
+        raise
+    if answer.action != "accept":
+        return {"status": "cancelled"}
+    selected = (answer.content or {}).get("model")
+    if not isinstance(selected, str) or selected not in choices:
+        raise ValueError("请选择本次列表中的一个模型。")
+    defaults = await set_defaults(model=selected, effort="inherit")
+    return {"status": "selected", "model": selected, "defaults": defaults}
 
 
 @mcp.tool(structured_output=False)

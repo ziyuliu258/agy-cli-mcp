@@ -10,7 +10,7 @@ description: 通过 agy MCP 提问并在聊天中展示模型原文，查看可�
 | 输入 | 操作 |
 | --- | --- |
 | 空输入或 `help` | 在聊天中给出直接提问、`list-models`、`status`、`neon`、`neon high`、`effort 档位`、`permission 策略`、`reset` 的简短用法。 |
-| `list-models` | 调用 `list_models()`，以可复制的模型 ID 为主。Claude 的版本可写作点号，例如 `claude-opus-5.5`，将 effort 单列。 |
+| `list-models` | 调用 `select_model()`，让用户从当前账号的模型和档位中选一个，设为以后的 agy 默认模型。 |
 | `status` | 调用 `get_settings()`，显示实际模型、当前和可选 effort，以及 MCP 保存的权限策略。将 `inherit` 显示为“跟随 agy CLI”。 |
 | 单独的 `model`、`effort` 或 `permission` | 用 `get_settings()` 查看对应字段。effort 和 permission 一并列出可选值。 |
 | `简称 [档位]` 或 `model 简称 [档位]` | 输入仅含模型简称和可选档位时切换默认模型。例：`neon high` 调用 `set_defaults(model="neon", effort="high")`；`neon` 仅调用 `set_defaults(model="neon")`，保留已有 effort。直接传简称，让 MCP 解析。 |
@@ -18,6 +18,14 @@ description: 通过 agy MCP 提问并在聊天中展示模型原文，查看可�
 | `model ID`、`effort 档位`、`permission 策略` | 调用 `set_defaults`，仅传指定的字段。按实际返回值确认修改；这些默认值由共用此安装的 agent 共享。 |
 | `reset` | 调用 `set_defaults(model="inherit", effort="inherit", permission="inherit")`。单项恢复使用 `effort inherit` 等。 |
 | `ask [选项] 问题` 或直接输入问题 | 调用 `ask(prompt=问题)`。保留问题原文、换行和代码，按原样返回 agy 的回复，除非用户要求加工。 |
+
+选模时按 `select_model` 返回的状态处理：
+
+- `selected`：服务已保存，直接显示所选 ID。
+- `cancelled`：结束选择。
+- `needs_selection`：以 `models` 中的精确 ID 为选项，用宿主实际提供的单选提问工具询问（如 AskUserQuestion、request_user_input_async 或 question）。超出选项数量上限时按系列分层或分页，涵盖全部档位。没有提问控件时，在聊天中给出编号清单，请用户回复编号或 ID。等待实际选择；编号对应本次展示的顺序。收到明确选择后调用 `set_defaults(model=所选原始ID, effort="inherit")` 一次，成功后确认。取消或没有回复时结束或继续等待。
+
+如果用户明确要求“只列出”，调用只读的 `list_models()`。如果服务版本较旧或宿主明确报告不支持 MCP 表单，调用 `list_models()` 后走聊天单选流程。
 
 Gemini 支持 `neon`、`carbon`、`argon`、`hydrogen`、`flash` 五个简称，大小写均可。切换或临时指定外接模型时，使用完整模型 ID（含型号和版本，档位可选）。若写带空格的显示名或 `opus high`、`sonnet`、`gpt` 等简称，调用 `list_models` 列出相关 ID 供选择，即使只有一个匹配也等用户选定。档位可用 `low`、`medium`、`high`、`xhigh`、`max`，由模型决定。像“neon 和 opus 有什么区别？”这样的完整问题交给 `ask`；`ask neon high` 也按字面提问。
 

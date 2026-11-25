@@ -17,6 +17,37 @@ def publish(path, data):
     os.replace(temp.name, path)
 
 
+CLIENTS = ("codex", "claude", "pi", "dsh", "opencode", "openchamber")
+
+
+def install_skill(client, source, target, command, args):
+    home = Path.home()
+    config_dir = Path(os.getenv("XDG_CONFIG_HOME") or home / ".config")
+    pi_dir = Path(os.getenv("PI_CODING_AGENT_DIR") or home / ".pi/agent")
+    dsh_dir = Path(os.getenv("DSH_HOME") or home / ".dsh")
+    opencode_dir = Path(os.getenv("OPENCODE_CONFIG_DIR") or config_dir / "opencode")
+    roots = {
+        "codex": home / ".agents", "claude": Path(os.getenv("CLAUDE_CONFIG_DIR") or home / ".claude"),
+        "pi": pi_dir, "dsh": dsh_dir, "opencode": opencode_dir, "openchamber": opencode_dir,
+    }
+    skill_dir = roots[client] / "skills" / "agy-cli"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    publish(skill_dir / "SKILL.md", (source / "skills/agy-cli/SKILL.md").read_bytes())
+    print(f"{client} skill 已安装到 {skill_dir}")
+    if client in ("pi", "opencode", "openchamber"):
+        templates = roots[client] / ("prompts" if client == "pi" else "commands")
+        templates.mkdir(parents=True, exist_ok=True)
+        publish(templates / "agy-cli.md", "调用 agy-cli 技能处理以下输入：\n\n$ARGUMENTS\n".encode())
+    if client == "dsh":
+        # A YAML patch layer is a list; JSON flow notation also quotes paths portably.
+        plugin = {"id": "mcp-agy", "name": "@deepseek-ai/dsh-mcp-client",
+                  "config": {"serverName": "agy", "transport": "stdio", "command": command,
+                             "args": args, "toolCallTimeoutMs": 630000}}
+        patch = target / "dsh-agy.patch.yml"
+        publish(patch, ("- insert:\n    - " + json.dumps(plugin, ensure_ascii=False) + "\n").encode())
+        print(f"DSH：将 {patch} 的列表项合并到当前 profile 的 cordis.patch.yml。")
+
+
 def main():
     if sys.version_info < (3, 10):
         sys.exit("需要 Python 3.10 或更高版本。")
@@ -27,7 +58,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install-dir", type=Path, default=default_root / "agy-cli-mcp")
     parser.add_argument("--agy-bin", default=os.getenv("AGY_BIN", "agy"))
-    parser.add_argument("--skill", action="append", choices=("codex", "claude"), default=[],
+    parser.add_argument("--skill", action="append", choices=CLIENTS, default=[],
                         help="Install the agy-cli chat skill for this client (repeatable)")
     options = parser.parse_args()
     binary = shutil.which(os.path.expanduser(options.agy_bin))
@@ -55,17 +86,12 @@ def main():
     publish(config_path, (json.dumps(config, indent=2, ensure_ascii=False) + "\n").encode())
     print(f"\n已安装到 {target}\n通用 MCP 配置文件：{config_path}\n")
     for client in dict.fromkeys(options.skill):
-        if client == "codex":
-            skill_root = Path.home() / ".agents" / "skills"
-        else:
-            skill_root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "skills"
-        skill_dir = skill_root / "agy-cli"
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        publish(skill_dir / "SKILL.md", (source / "skills/agy-cli/SKILL.md").read_bytes())
-        print(f"{client} skill 已安装到 {skill_dir}")
+        install_skill(client, source, target, str(python), args)
     print("按所用客户端选择一条注册命令：")
     for prefix in (["claude", "mcp", "add", "--scope", "user", "--transport", "stdio", "agy", "--"],
-                   ["codex", "mcp", "add", "agy", "--"]):
+                   ["codex", "mcp", "add", "agy", "--"],
+                   ["pi", "mcp", "add", "agy", "--"],
+                   ["opencode", "mcp", "add", "--global", "agy", "--"]):
         words = [*prefix, str(python), *args]
         if windows:
             print("& " + " ".join("'" + word.replace("'", "''") + "'" for word in words))
