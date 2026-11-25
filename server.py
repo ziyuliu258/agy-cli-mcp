@@ -1,5 +1,6 @@
 """An MCP stdio bridge for the authenticated Antigravity CLI."""
 import argparse
+import base64
 import json
 import os
 import re
@@ -7,15 +8,21 @@ import shutil
 import sqlite3
 from contextlib import closing
 from pathlib import Path
+from subprocess import DEVNULL
 from tempfile import TemporaryDirectory
 from typing import Literal, get_args
 
 import anyio
+from anyio.streams.buffered import BufferedByteReceiveStream
 from mcp import McpError, types
 from mcp.server.fastmcp import Context, FastMCP
 
 mcp = FastMCP("agy", instructions=(
     "When the user asks to consult an agy model, use ask. "
+    "For user-referenced text or an editor selection, include the exact relevant excerpt in prompt. "
+    "For user-referenced images, use ask_image with local image paths or Base64 image data. "
+    "Pass a crop for a screenshot selection when available. Say when the host has not provided "
+    "the referenced content. "
     "Show its reply directly in the chat, preserving its language and Markdown, "
     "unless the user requests a summary or further processing. Use ask parameters for one turn. "
     "In Claude Code, list_models then show numbered choices in chat and use AskUserQuestion if available. "
@@ -271,6 +278,119 @@ async def ask(prompt: str, model: str | None = None, effort: Effort | None = Non
                 raise RuntimeError("agy 返回了空回复。")
             return reply
     raise RuntimeError(stderr or f"agy 没有返回最终结果（退出码 {code}）。")
+
+
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+IMAGE_TYPES = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+
+
+def image_block(source):
+    if source.startswith("data:"):
+        header, _, encoded = source.removeprefix("data:").partition(",")
+        mime, _, encoding = header.partition(";")
+        if mime not in IMAGE_TYPES.values() or encoding != "base64":
+            raise ValueError("请传入 PNG、JPEG 或 WebP 的 Base64 data URL。")
+        if len(encoded) > 4 * ((MAX_IMAGE_BYTES + 2) // 3):
+            raise ValueError("单张图片最大 8 MiB。")
+        data = base64.b64decode(encoded, validate=True)
+    else:
+        path = Path(source).expanduser()
+        mime = IMAGE_TYPES.get(path.suffix.lower().lstrip("."))
+        if not path.is_absolute() or not mime or not path.is_file():
+            raise ValueError(f"请传入可读的 PNG、JPEG 或 WebP 图片绝对路径：{source}")
+        with path.open("rb") as file:
+            data = file.read(MAX_IMAGE_BYTES + 1)
+    if not data or len(data) > MAX_IMAGE_BYTES:
+        raise ValueError("图片不能为空，单张图片最大 8 MiB。")
+    return {"type": "image", "mimeType": mime, "data": base64.b64encode(data).decode("ascii")}
+
+
+async def run_image_prompt(blocks, options):
+    with TemporaryDirectory(prefix="agy-mcp-image-") as directory:
+        async with await anyio.open_process([AGY, "acp"], cwd=directory, stderr=DEVNULL) as proc:
+            incoming = BufferedByteReceiveStream(proc.stdout)
+            response_chunks = []
+            request_id = 0
+
+            async def send(message):
+                await proc.stdin.send((json.dumps({"jsonrpc": "2.0", **message}) + "\n").encode())
+
+            async def call(method, params):
+                nonlocal request_id
+                request_id += 1
+                await send({"id": request_id, "method": method, "params": params})
+                while True:
+                    event = json.loads(await incoming.receive_until(b"\n", 8 * 1024 * 1024))
+                    if "method" in event and "id" in event:
+                        if event["method"] == "session/request_permission":
+                            await send({"id": event["id"], "result": {"outcome": {"outcome": "cancelled"}}})
+                        else:
+                            await send({"id": event["id"], "error": {"code": -32601, "message": "Unsupported client method"}})
+                    elif event.get("method") == "session/update":
+                        update = event["params"]["update"]
+                        content = update.get("content", {})
+                        if update.get("sessionUpdate") == "agent_message_chunk" and content.get("type") == "text":
+                            response_chunks.append(content["text"])
+                    elif event.get("id") == request_id:
+                        if "error" in event:
+                            raise RuntimeError(event["error"]["message"])
+                        return event["result"]
+
+            try:
+                with anyio.fail_after(ASK_SECONDS):
+                    init = await call("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
+                    if not init["agentCapabilities"].get("promptCapabilities", {}).get("image"):
+                        raise RuntimeError("当前 agy ACP 版本未提供图片输入能力。")
+                    session = await call("session/new", {"cwd": directory, "mcpServers": []})
+                    session_id = {"sessionId": session["sessionId"]}
+                    config = {option["id"]: option for option in session.get("configOptions", [])}
+                    model, effort = options["model"], options["effort"]
+                    if model != "inherit":
+                        available = {item["value"] for item in config["model"]["options"]}
+                        family, _, tier = model.rpartition("-")
+                        if family in available and tier in EFFORT_LEVELS and effort == "inherit":
+                            effort = tier
+                        if model not in available and tier in EFFORT_LEVELS:
+                            model = family
+                        await call("session/set_config_option", {**session_id, "configId": "model", "value": model})
+                    if effort != "inherit":
+                        await call("session/set_config_option", {
+                            **session_id, "configId": "thought_level", "value": effort,
+                        })
+                    response_chunks.clear()
+                    result = await call("session/prompt", {**session_id, "prompt": blocks})
+                    reply = "".join(response_chunks)
+                    if not reply.strip() or result.get("stopReason") == "cancelled":
+                        raise RuntimeError(f"agy 未返回完整的图片回复（{result.get('stopReason')}）。")
+                    return reply
+            except (anyio.EndOfStream, anyio.IncompleteRead) as exc:
+                raise RuntimeError("agy ACP 提前退出。请检查 agy 版本和登录状态。") from exc
+            except TimeoutError as exc:
+                raise RuntimeError(f"agy 图片请求在 {ASK_SECONDS} 秒后超时。") from exc
+            finally:
+                if proc.returncode is None:
+                    proc.terminate()
+                    with anyio.move_on_after(2, shield=True):
+                        await proc.wait()
+                    if proc.returncode is None:
+                        proc.kill()
+
+
+@mcp.tool(structured_output=False)
+async def ask_image(prompt: str, images: list[str], model: str | None = None,
+                    effort: Effort | None = None) -> str:
+    """Ask agy about user-provided images and return its reply verbatim.
+    Pass one to four absolute local PNG/JPEG/WebP paths or image data URLs.
+    For a selected screenshot region, pass a cropped image when available.
+    Model and effort follow ask defaults. Image sessions decline approval requests.
+    """
+    if not prompt.strip() or not 1 <= len(images) <= 4:
+        raise ValueError("请提供问题和 1 至 4 张图片。")
+    blocks = [{"type": "text", "text": prompt}, *(image_block(source) for source in images)]
+    with closing(preference_store()) as conn:
+        previous = saved_options(conn)
+    options = await combine(previous, model, effort, None)
+    return await run_image_prompt(blocks, options)
 
 
 if __name__ == "__main__":

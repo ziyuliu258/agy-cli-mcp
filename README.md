@@ -2,6 +2,12 @@
 
 通过支持本地 stdio MCP 的 agent 调用 Antigravity CLI。使用 `list_models()` 列出模型，`ask` 提问，`get_settings()` 查看配置，`set_defaults` 切换默认设置。回复保留模型的原文和 Markdown。每次提问独立执行，追问时请把所需上下文一起传入。
 
+## 让 agy 看引用和图片
+
+宿主读取用户指定的聊天原文、代码或 IDE 选区，再将文本放进 `ask`。传图片使用 `ask_image(prompt, images, model?, effort?)`，`images` 接受 1 至 4 个本机绝对路径或 Base64 data URL，支持 PNG、JPEG、WebP（单张最多 8 MiB）。框选截图优先传宿主提供的裁剪图。若宿主只提供原图和坐标，也可在问题中注明选区范围。
+
+图片会经 `agy acp` 作为原始像素送入模型。该调用使用 agy 的 ACP 会话并拒绝其中的审批请求。宿主需要把引用内容或文件交给 skill，客户端对选区和附件的访问方式取决于各自的集成。[Antigravity ACP](https://antigravity.google/docs/cli/acp/)
+
 ## 在目标机器安装
 
 1. 准备 Python 3.10 或更高版本，安装 Antigravity CLI 并在运行 agent 的系统账号下完成登录。在终端执行 `agy models`，确认能看到模型列表。[Google 官方安装说明](https://antigravity.google/docs/getting-started?tab=cli)
