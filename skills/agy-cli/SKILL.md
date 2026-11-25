@@ -9,13 +9,16 @@ description: 通过 agy MCP 提问并在聊天中展示模型原文，查看可�
 
 | 输入 | 操作 |
 | --- | --- |
-| 空输入或 `help` | 在聊天中给出直接提问、`models`、`status`、`model ID`、`effort 档位`、`permission 策略`、`reset` 的简短用法。 |
+| 空输入或 `help` | 在聊天中给出直接提问、`models`、`status`、`neon`、`neon high`、`effort 档位`、`permission 策略`、`reset` 的简短用法。 |
 | `models` | 调用 `list_models()`，显示可复制的 ID 和名称。 |
 | `status` | 调用 `get_settings()`，显示实际模型、当前和可选 effort，以及 MCP 保存的权限策略。将 `inherit` 显示为“跟随 agy CLI”。 |
 | 单独的 `model`、`effort` 或 `permission` | 用 `get_settings()` 查看对应字段。effort 和 permission 一并列出可选值。 |
+| `简称 [档位]` 或 `model 简称 [档位]` | 输入仅含模型简称和可选档位时切换默认模型。例：`neon high` 调用 `set_defaults(model="neon", effort="high")`；`neon` 仅调用 `set_defaults(model="neon")`，保留已有 effort。直接传简称，让 MCP 解析。 |
 | `model ID`、`effort 档位`、`permission 策略` | 调用 `set_defaults`，仅传指定的字段。按实际返回值确认修改；这些默认值由共用此安装的 agent 共享。 |
 | `reset` | 调用 `set_defaults(model="inherit", effort="inherit", permission="inherit")`。单项恢复使用 `effort inherit` 等。 |
 | `ask [选项] 问题` 或直接输入问题 | 调用 `ask(prompt=问题)`。保留问题原文、换行和代码，按原样返回 agy 的回复，除非用户要求加工。 |
+
+支持的简称为 `neon`、`carbon`、`argon`、`hydrogen`、`flash`、`opus`、`sonnet`，大小写均可。档位可用 `low`、`medium`、`high`、`xhigh`、`max`，由模型决定。像“neon 和 opus 有什么区别？”这样的完整问题交给 `ask`；`ask neon high` 也按字面提问。
 
 `ask` 的开头支持 `--model ID`、`--effort 档位`、`--permission 策略`，只作为该次调用的字段传入。可用 `--` 标记问题正文的开头。例如 `ask --effort low -- 为什么天空是蓝色的？`。正文、引文和代码里的选项或命令均是提问内容；查询命令按完整输入匹配。含糊的模型简称用 `list_models` 核对，多个可能时让用户选。无效的设置值应返回可选项或 MCP 的具体报错。
 

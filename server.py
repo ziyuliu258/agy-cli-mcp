@@ -24,6 +24,7 @@ ASK_SECONDS = 600
 
 Effort = Literal["inherit", "low", "medium", "high", "xhigh", "max"]
 EFFORT_LEVELS = set(get_args(Effort)) - {"inherit"}
+MODEL_SHORTCUTS = {"neon", "carbon", "argon", "hydrogen", "flash", "opus", "sonnet"}
 Permission = Literal["inherit", "strict", "request-review", "proceed-in-sandbox", "always-proceed"]
 DB = Path(__file__).resolve().with_name("defaults.sqlite3")
 INHERITED = dict.fromkeys(("model", "effort", "permission"), "inherit")
@@ -39,14 +40,34 @@ def saved_options(conn):
     return {**INHERITED, **dict(conn.execute("SELECT name, value FROM defaults"))}
 
 
-def combine(previous, model, effort, permission):
+async def resolve_family(shortcut):
+    # Orchestrator planner IDs also contain "neon" or "argon". Only match tiered models.
+    families = set()
+    for line in (await list_models()).splitlines():
+        model_id, tab, _ = line.partition("\t")
+        family, _, tier = model_id.rpartition("-")
+        if tab and tier in EFFORT_LEVELS and shortcut in family.lower().split("-"):
+            families.add(family)
+    if not families:
+        raise ValueError(f"当前模型列表中没有可用的 {shortcut} 系列。")
+    if len(families) > 1:
+        raise ValueError(f"{shortcut} 匹配多个系列，请选择：" + "、".join(sorted(families)))
+    return families.pop()
+
+
+async def combine(previous, model, effort, permission):
     options = previous.copy()
     if model is not None:
         model = model.strip()
         if not model:
             raise ValueError("请输入模型 ID，或用 inherit 跟随 CLI。")
+        if model.lower() in MODEL_SHORTCUTS:
+            model = await resolve_family(model.lower())
+            previous_tier = previous["model"].rpartition("-")[2]
+            if effort is None and previous["effort"] == "inherit" and previous_tier in EFFORT_LEVELS:
+                # Older settings can encode an explicit tier solely in the model ID.
+                model = f"{model}-{previous_tier}"
         options["model"] = model
-        # A specifically selected variant takes precedence over a previously saved tier.
         if model.rpartition("-")[2] in EFFORT_LEVELS:
             options["effort"] = "inherit"
     if effort is not None:
@@ -99,13 +120,14 @@ async def get_settings() -> dict:
 async def set_defaults(model: str | None = None, effort: Effort | None = None,
                        permission: Permission | None = None) -> dict:
     """Save defaults shared by all clients using this installation, only on explicit request.
-    Omit fields to keep them. Set 'inherit' to remove an override. Choosing an exact
-    tiered model also selects its tier unless effort is given. To reset all, use
+    Model accepts family shortcuts such as neon, opus or sonnet. A shortcut alone keeps
+    the saved effort. Pass effort separately to switch both. Set 'inherit' to remove an
+    override. Choosing an exact tiered model also selects its tier unless effort is given. To reset all, use
     'inherit' for all three. always-proceed allows unattended tools per agy rules.
     """
     with closing(preference_store()) as conn:
         previous = saved_options(conn)
-        updated = combine(previous, model, effort, permission)
+        updated = await combine(previous, model, effort, permission)
         if updated == previous:
             return updated
         if (model is not None or effort is not None) and (
@@ -145,8 +167,8 @@ async def list_models() -> str:
 async def ask(prompt: str, model: str | None = None, effort: Effort | None = None,
               permission: Permission | None = None) -> str:
     """Ask agy and show the verbatim reply. Model, effort, and permission override
-    saved defaults for this call. 'inherit' uses the CLI setting. Include relevant
-    history in prompt. Permission controls agy tools; headless approvals are denied.
+    saved defaults for this call. Family shortcuts such as neon are accepted. 'inherit'
+    uses the CLI setting. Include relevant history in prompt. Permission controls agy tools; headless approvals are denied.
     Select always-proceed only when requested.
     """
     if not prompt.strip():
@@ -156,7 +178,8 @@ async def ask(prompt: str, model: str | None = None, effort: Effort | None = Non
         "--output-format", "stream-json", "--print-timeout", f"{ASK_SECONDS}s", "--print=",
     ]
     with closing(preference_store()) as conn:
-        options = combine(saved_options(conn), model, effort, permission)
+        previous = saved_options(conn)
+    options = await combine(previous, model, effort, permission)
     args.extend(model_flags(options))
     policy = options["permission"]
     if policy != "inherit":
