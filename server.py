@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import sqlite3
 from contextlib import closing
@@ -44,26 +45,29 @@ async def resolve_model(name):
     if name == "inherit" or name.startswith("gemini-"):
         return name, False
     key = name.casefold()
+    # Some agy IDs encode a dotted version as separate hyphenated numbers.
+    cli_spelling = re.sub(r"(?<=[0-9])\.(?=[0-9])", "-", name)
     choices = set()
     for line in (await list_models()).splitlines():
         model_id, tab, label = line.partition("\t")
         if not tab:
             continue
+        gemini = model_id.startswith("gemini-")
         family, _, tier = model_id.rpartition("-")
         if key in GEMINI_SHORTCUTS:
-            if family.startswith("gemini-") and tier in EFFORT_LEVELS and key in family.split("-"):
+            if gemini and tier in EFFORT_LEVELS and key in family.split("-"):
                 choices.add((family, True))
-        elif name == model_id or key == label.strip().casefold():
+        elif model_id in (name, cli_spelling) or (gemini and key == label.strip().casefold()):
             choices.add((model_id, False))
         elif tier in EFFORT_LEVELS and "-" in family:
             full_name = label.strip().casefold().removesuffix(f" ({tier})")
-            if name == family or key == full_name:
+            if family in (name, cli_spelling) or (gemini and key == full_name):
                 choices.add((family, True))
     if len(choices) == 1:
         return choices.pop()
     if choices:
         raise ValueError(f"{name} 匹配多个模型，请使用完整 ID：" + "、".join(sorted(model_id for model_id, _ in choices)))
-    raise ValueError(f"无法选择 {name}。请用 /agy-cli models 查看完整 ID 或显示名称。外接模型需要全称。")
+    raise ValueError(f"无法选择 {name}。请用 /agy-cli models 查看完整模型 ID。")
 
 
 async def combine(previous, model, effort, permission):
@@ -131,7 +135,7 @@ async def get_settings() -> dict:
 async def set_defaults(model: str | None = None, effort: Effort | None = None,
                        permission: Permission | None = None) -> dict:
     """Save defaults shared by all clients using this installation, only on explicit request.
-    Use full model names or IDs for external models (Claude, GPT, etc.).
+    Use external model IDs such as claude-opus-5.5, optionally with a separate effort.
     Gemini accepts shortcuts such as neon. A shortcut alone keeps
     the saved effort. Pass effort separately to switch both. Set 'inherit' to remove an
     override. Choosing an exact tiered model also selects its tier unless effort is given. To reset all, use
@@ -179,7 +183,7 @@ async def list_models() -> str:
 async def ask(prompt: str, model: str | None = None, effort: Effort | None = None,
               permission: Permission | None = None) -> str:
     """Ask agy and show the verbatim reply. Model, effort, and permission override
-    saved defaults for this call. Use a Gemini shortcut or a full listed model ID/name. 'inherit'
+    saved defaults for this call. Use a Gemini shortcut or an external model ID such as claude-opus-5.5. 'inherit'
     uses the CLI setting. Include relevant history in prompt. Permission controls agy tools; headless approvals are denied.
     Select always-proceed only when requested.
     """
