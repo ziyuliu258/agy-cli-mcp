@@ -24,7 +24,7 @@ ASK_SECONDS = 600
 
 Effort = Literal["inherit", "low", "medium", "high", "xhigh", "max"]
 EFFORT_LEVELS = set(get_args(Effort)) - {"inherit"}
-MODEL_SHORTCUTS = {"neon", "carbon", "argon", "hydrogen", "flash", "opus", "sonnet"}
+GEMINI_SHORTCUTS = {"neon", "carbon", "argon", "hydrogen", "flash"}
 Permission = Literal["inherit", "strict", "request-review", "proceed-in-sandbox", "always-proceed"]
 DB = Path(__file__).resolve().with_name("defaults.sqlite3")
 INHERITED = dict.fromkeys(("model", "effort", "permission"), "inherit")
@@ -40,19 +40,30 @@ def saved_options(conn):
     return {**INHERITED, **dict(conn.execute("SELECT name, value FROM defaults"))}
 
 
-async def resolve_family(shortcut):
-    # Orchestrator planner IDs also contain "neon" or "argon". Only match tiered models.
-    families = set()
+async def resolve_model(name):
+    if name == "inherit" or name.startswith("gemini-"):
+        return name, False
+    key = name.casefold()
+    choices = set()
     for line in (await list_models()).splitlines():
-        model_id, tab, _ = line.partition("\t")
+        model_id, tab, label = line.partition("\t")
+        if not tab:
+            continue
         family, _, tier = model_id.rpartition("-")
-        if tab and tier in EFFORT_LEVELS and shortcut in family.lower().split("-"):
-            families.add(family)
-    if not families:
-        raise ValueError(f"当前模型列表中没有可用的 {shortcut} 系列。")
-    if len(families) > 1:
-        raise ValueError(f"{shortcut} 匹配多个系列，请选择：" + "、".join(sorted(families)))
-    return families.pop()
+        if key in GEMINI_SHORTCUTS:
+            if family.startswith("gemini-") and tier in EFFORT_LEVELS and key in family.split("-"):
+                choices.add((family, True))
+        elif name == model_id or key == label.strip().casefold():
+            choices.add((model_id, False))
+        elif tier in EFFORT_LEVELS and "-" in family:
+            full_name = label.strip().casefold().removesuffix(f" ({tier})")
+            if name == family or key == full_name:
+                choices.add((family, True))
+    if len(choices) == 1:
+        return choices.pop()
+    if choices:
+        raise ValueError(f"{name} 匹配多个模型，请使用完整 ID：" + "、".join(sorted(model_id for model_id, _ in choices)))
+    raise ValueError(f"无法选择 {name}。请用 /agy-cli models 查看完整 ID 或显示名称。外接模型需要全称。")
 
 
 async def combine(previous, model, effort, permission):
@@ -61,8 +72,8 @@ async def combine(previous, model, effort, permission):
         model = model.strip()
         if not model:
             raise ValueError("请输入模型 ID，或用 inherit 跟随 CLI。")
-        if model.lower() in MODEL_SHORTCUTS:
-            model = await resolve_family(model.lower())
+        model, is_family = await resolve_model(model)
+        if is_family:
             previous_tier = previous["model"].rpartition("-")[2]
             if effort is None and previous["effort"] == "inherit" and previous_tier in EFFORT_LEVELS:
                 # Older settings can encode an explicit tier solely in the model ID.
@@ -120,7 +131,8 @@ async def get_settings() -> dict:
 async def set_defaults(model: str | None = None, effort: Effort | None = None,
                        permission: Permission | None = None) -> dict:
     """Save defaults shared by all clients using this installation, only on explicit request.
-    Model accepts family shortcuts such as neon, opus or sonnet. A shortcut alone keeps
+    Use full model names or IDs for external models (Claude, GPT, etc.).
+    Gemini accepts shortcuts such as neon. A shortcut alone keeps
     the saved effort. Pass effort separately to switch both. Set 'inherit' to remove an
     override. Choosing an exact tiered model also selects its tier unless effort is given. To reset all, use
     'inherit' for all three. always-proceed allows unattended tools per agy rules.
@@ -167,7 +179,7 @@ async def list_models() -> str:
 async def ask(prompt: str, model: str | None = None, effort: Effort | None = None,
               permission: Permission | None = None) -> str:
     """Ask agy and show the verbatim reply. Model, effort, and permission override
-    saved defaults for this call. Family shortcuts such as neon are accepted. 'inherit'
+    saved defaults for this call. Use a Gemini shortcut or a full listed model ID/name. 'inherit'
     uses the CLI setting. Include relevant history in prompt. Permission controls agy tools; headless approvals are denied.
     Select always-proceed only when requested.
     """

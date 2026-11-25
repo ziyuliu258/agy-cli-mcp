@@ -35,13 +35,17 @@ Claude Code 使用 `/agy-cli`，Codex 可使用 `$agy-cli` 选择技能。下面
 /agy-cli status
 /agy-cli neon high
 /agy-cli neon
+/agy-cli claude-opus-5-5-high
+/agy-cli gpt-oss-120b-medium
 /agy-cli effort high
 /agy-cli permission strict
 /agy-cli ask --effort low -- 用一句话解释过拟合
 /agy-cli reset
 ```
 
-直接写 `neon high` 会同时切换默认模型和 effort，单写 `neon` 只切模型，保留已有的 effort 配置。支持的简称还有 `carbon`、`argon`、`hydrogen`、`flash`、`opus` 和 `sonnet`。若目标模型不支持保留的档位，设置会报错，原配置继续生效。
+直接写 `neon high` 会同时切换默认模型和 effort，单写 `neon` 只切模型，保留已有的 effort 配置。支持的简称还有 `carbon`、`argon`、`hydrogen` 和 `flash`。若目标模型不支持保留的档位，设置会报错，原配置继续生效。
+
+Claude、GPT 等外接模型在切换和单次提问时均使用完整模型名或 ID。例如 `/agy-cli Claude Opus 5.5 high` 同时指定模型和档位，`/agy-cli Claude Opus 5.5` 只切换模型。也可从 `/agy-cli models` 直接复制带档位的完整 ID 或显示名称。
 
 模型、effort 和权限子命令带值时会保存默认值，省略值时查询当前设置。`ask` 的选项仅用于当前问题。其他兼容 Agent Skills 的客户端也可以把包内的 `skills/agy-cli` 目录复制到自己的技能目录，再连接 `agy` MCP。
 
