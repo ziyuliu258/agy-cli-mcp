@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+/defaults.sqlite3*
+/mcp-config.json
